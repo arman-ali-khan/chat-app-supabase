@@ -92,27 +92,31 @@ export function getCurrentUser() {
   return userData ? JSON.parse(userData) : null;
 }
 
-export function logoutUser() {
+export async function logoutUser() {
   if (typeof window === 'undefined') return;
   const user = getCurrentUser();
   if (user) {
     // Stop presence heartbeat
     stopPresenceHeartbeat();
     
-    // Update online status
-    supabase
-      .from('users')
-      .update({ 
-        is_online: false, 
-        last_seen: new Date().toISOString() 
-      })
-      .eq('id', user.id)
-      .then(() => {
-        console.log('User logged out successfully');
-      })
-      .catch((error) => {
+    // Update online status - properly handle the async operation
+    try {
+      const { error } = await supabase
+        .from('users')
+        .update({ 
+          is_online: false, 
+          last_seen: new Date().toISOString() 
+        })
+        .eq('id', user.id);
+
+      if (error) {
         console.error('Error updating logout status:', error);
-      });
+      } else {
+        console.log('User logged out successfully');
+      }
+    } catch (error) {
+      console.error('Error updating logout status:', error);
+    }
   }
   localStorage.removeItem('currentUser');
 }
@@ -171,31 +175,31 @@ function startPresenceHeartbeat(userId: string) {
   }, 15000);
   
   // Handle page visibility changes
-  const handleVisibilityChange = () => {
+  const handleVisibilityChange = async () => {
     if (document.hidden) {
       console.log('Page hidden, marking user offline');
-      updateUserPresence(userId, false);
+      await updateUserPresence(userId, false);
     } else {
       console.log('Page visible, marking user online');
-      updateUserPresence(userId, true);
+      await updateUserPresence(userId, true);
     }
   };
   
   // Handle page unload
-  const handleBeforeUnload = () => {
+  const handleBeforeUnload = async () => {
     console.log('Page unloading, marking user offline');
-    updateUserPresence(userId, false);
+    await updateUserPresence(userId, false);
   };
   
   // Handle online/offline events
-  const handleOnline = () => {
+  const handleOnline = async () => {
     console.log('Connection restored, marking user online');
-    updateUserPresence(userId, true);
+    await updateUserPresence(userId, true);
   };
   
-  const handleOffline = () => {
+  const handleOffline = async () => {
     console.log('Connection lost, marking user offline');
-    updateUserPresence(userId, false);
+    await updateUserPresence(userId, false);
   };
   
   document.addEventListener('visibilitychange', handleVisibilityChange);
