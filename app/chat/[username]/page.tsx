@@ -1,7 +1,5 @@
-
-
-import { ChatRoom } from '@/components/chat-room';
+import { EnhancedChatRoom } from '@/components/enhanced-chat-room';
 
 export default function ChatRoomPage({ params }: { params: { username: string } }) {
-  return <ChatRoom targetUsername={params.username} />;
+  return <EnhancedChatRoom targetUsername={params.username} />;
 }
