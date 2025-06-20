@@ -24,6 +24,45 @@ export function UserList({ currentUser, onUserSelect, onLogout, selectedUsername
 
   useEffect(() => {
     fetchUsers();
+    
+    // Subscribe to user updates for real-time presence
+    const channel = supabase
+      .channel('user-list-updates')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'users',
+        },
+        (payload) => {
+          console.log('User update received:', payload);
+          setUsers((prev) =>
+            prev.map((user) =>
+              user.id === payload.new.id ? { ...user, ...payload.new } : user
+            )
+          );
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'users',
+        },
+        (payload) => {
+          console.log('New user added:', payload);
+          setUsers((prev) => [...prev, payload.new]);
+        }
+      )
+      .subscribe((status) => {
+        console.log('User list subscription status:', status);
+      });
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   useEffect(() => {
@@ -36,17 +75,30 @@ export function UserList({ currentUser, onUserSelect, onLogout, selectedUsername
   }, [users, searchQuery, currentUser]);
 
   const fetchUsers = async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('users')
       .select('*')
       .order('last_seen', { ascending: false });
     
-    if (data) setUsers(data);
+    if (error) {
+      console.error('Error fetching users:', error);
+      return;
+    }
+    
+    if (data) {
+      setUsers(data);
+    }
   };
 
   const isUserOnline = (user: any) => {
-    return user.is_online && 
-           new Date().getTime() - new Date(user.last_seen).getTime() < 15000;
+    if (!user.is_online) return false;
+    
+    // Consider user online if they were active within the last 30 seconds
+    const lastSeen = new Date(user.last_seen).getTime();
+    const now = new Date().getTime();
+    const timeDiff = now - lastSeen;
+    
+    return timeDiff < 30000; // 30 seconds
   };
 
   return (
@@ -102,48 +154,59 @@ export function UserList({ currentUser, onUserSelect, onLogout, selectedUsername
             </div>
           ) : (
             <div className="space-y-1">
-              {filteredUsers.map((user) => (
-                <button
-                  key={user.id}
-                  onClick={() => onUserSelect(user.username)}
-                  className={cn(
-                    "w-full p-3 rounded-lg text-left transition-colors hover:bg-gray-100 dark:hover:bg-gray-700",
-                    selectedUsername === user.username && "bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700"
-                  )}
-                >
-                  <div className="flex items-center space-x-3">
-                    <div className="relative">
-                      <Avatar className="w-10 h-10">
-                        <AvatarFallback className="bg-gradient-to-r from-green-500 to-blue-500 text-white">
-                          {user.display_name.charAt(0).toUpperCase()}
-                        </AvatarFallback>
-                      </Avatar>
-                      <Circle 
-                        className={cn(
-                          "absolute -bottom-1 -right-1 w-4 h-4 border-2 border-white dark:border-gray-800 rounded-full",
-                          isUserOnline(user) ? "text-green-500 fill-current" : "text-gray-400 fill-current"
+              {filteredUsers.map((user) => {
+                const isOnline = isUserOnline(user);
+                return (
+                  <button
+                    key={user.id}
+                    onClick={() => onUserSelect(user.username)}
+                    className={cn(
+                      "w-full p-3 rounded-lg text-left transition-colors hover:bg-gray-100 dark:hover:bg-gray-700",
+                      selectedUsername === user.username && "bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700"
+                    )}
+                  >
+                    <div className="flex items-center space-x-3">
+                      <div className="relative">
+                        <Avatar className="w-10 h-10">
+                          <AvatarFallback className="bg-gradient-to-r from-green-500 to-blue-500 text-white">
+                            {user.display_name.charAt(0).toUpperCase()}
+                          </AvatarFallback>
+                        </Avatar>
+                        <Circle 
+                          className={cn(
+                            "absolute -bottom-1 -right-1 w-4 h-4 border-2 border-white dark:border-gray-800 rounded-full",
+                            isOnline ? "text-green-500 fill-current" : "text-gray-400 fill-current"
+                          )}
+                        />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium text-gray-900 dark:text-white truncate">
+                          {user.display_name}
+                        </p>
+                        <p className="text-sm text-gray-500 dark:text-gray-400 truncate">
+                          @{user.username}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className={cn(
+                          "text-xs",
+                          isOnline ? "text-green-500" : "text-gray-400"
+                        )}>
+                          {isOnline ? 'Online' : 'Offline'}
+                        </p>
+                        {!isOnline && user.last_seen && (
+                          <p className="text-xs text-gray-400">
+                            {new Date(user.last_seen).toLocaleTimeString([], { 
+                              hour: '2-digit', 
+                              minute: '2-digit' 
+                            })}
+                          </p>
                         )}
-                      />
+                      </div>
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium text-gray-900 dark:text-white truncate">
-                        {user.display_name}
-                      </p>
-                      <p className="text-sm text-gray-500 dark:text-gray-400 truncate">
-                        @{user.username}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className={cn(
-                        "text-xs",
-                        isUserOnline(user) ? "text-green-500" : "text-gray-400"
-                      )}>
-                        {isUserOnline(user) ? 'Online' : 'Offline'}
-                      </p>
-                    </div>
-                  </div>
-                </button>
-              ))}
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>

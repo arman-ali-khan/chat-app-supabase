@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { getCurrentUser } from '@/lib/auth';
+import { getCurrentUser, updateUserPresence } from '@/lib/auth';
 import { UserList } from '@/components/user-list';
 
 export default function ChatPage() {
@@ -12,6 +12,9 @@ export default function ChatPage() {
   useEffect(() => {
     if (!currentUser) {
       router.push('/');
+    } else {
+      // Update user presence when entering chat
+      updateUserPresence(currentUser.id, true);
     }
   }, [currentUser, router]);
 

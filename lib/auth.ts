@@ -75,6 +75,10 @@ export async function loginUser(data: LoginData) {
     console.log('Login successful:', user);
     // Store user in localStorage
     localStorage.setItem('currentUser', JSON.stringify(user));
+    
+    // Start presence heartbeat
+    startPresenceHeartbeat(user.id);
+    
     return { user, error: null };
   } catch (error) {
     console.error('Login error:', error);
@@ -92,6 +96,9 @@ export function logoutUser() {
   if (typeof window === 'undefined') return;
   const user = getCurrentUser();
   if (user) {
+    // Stop presence heartbeat
+    stopPresenceHeartbeat();
+    
     // Update online status
     supabase
       .from('users')
@@ -120,4 +127,60 @@ export async function updateUserPresence(userId: string, isOnline: boolean) {
     .eq('id', userId);
 
   return { error };
+}
+
+// Presence heartbeat functionality
+let presenceInterval: NodeJS.Timeout | null = null;
+
+function startPresenceHeartbeat(userId: string) {
+  // Clear any existing interval
+  if (presenceInterval) {
+    clearInterval(presenceInterval);
+  }
+  
+  // Update presence every 10 seconds
+  presenceInterval = setInterval(async () => {
+    try {
+      await updateUserPresence(userId, true);
+    } catch (error) {
+      console.error('Error updating presence:', error);
+    }
+  }, 10000);
+  
+  // Handle page visibility changes
+  const handleVisibilityChange = () => {
+    if (document.hidden) {
+      // Page is hidden, mark as offline
+      updateUserPresence(userId, false);
+    } else {
+      // Page is visible, mark as online
+      updateUserPresence(userId, true);
+    }
+  };
+  
+  // Handle page unload
+  const handleBeforeUnload = () => {
+    updateUserPresence(userId, false);
+  };
+  
+  document.addEventListener('visibilitychange', handleVisibilityChange);
+  window.addEventListener('beforeunload', handleBeforeUnload);
+  
+  // Store cleanup functions
+  (window as any).cleanupPresence = () => {
+    document.removeEventListener('visibilitychange', handleVisibilityChange);
+    window.removeEventListener('beforeunload', handleBeforeUnload);
+  };
+}
+
+function stopPresenceHeartbeat() {
+  if (presenceInterval) {
+    clearInterval(presenceInterval);
+    presenceInterval = null;
+  }
+  
+  // Cleanup event listeners
+  if ((window as any).cleanupPresence) {
+    (window as any).cleanupPresence();
+  }
 }

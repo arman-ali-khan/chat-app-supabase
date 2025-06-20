@@ -73,8 +73,11 @@ export function useChat() {
         .single();
 
       if (error) throw error;
+      
+      console.log('Message sent successfully:', data);
       return { message: data, error: null };
     } catch (error) {
+      console.error('Error sending message:', error);
       return { message: null, error: error as Error };
     }
   }, []);

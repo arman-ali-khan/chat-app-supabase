@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { LoginScreen } from '@/components/login-screen';
-import { getCurrentUser } from '@/lib/auth';
+import { getCurrentUser, updateUserPresence } from '@/lib/auth';
 
 export default function Home() {
   const [isLoading, setIsLoading] = useState(true);
@@ -12,6 +12,8 @@ export default function Home() {
   useEffect(() => {
     const user = getCurrentUser();
     if (user) {
+      // Update user presence when app loads
+      updateUserPresence(user.id, true);
       router.push('/chat');
     } else {
       setIsLoading(false);

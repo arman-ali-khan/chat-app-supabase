@@ -88,10 +88,40 @@ export function ChatRoom({ targetUsername }: ChatRoomProps) {
     initializeChat();
   }, [currentUser, targetUsername, findOrCreateChatRoom, router]);
 
-  // Auto scroll to bottom
+  // Auto scroll to bottom when new messages arrive
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (messages.length > 0) {
+      setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
+    }
   }, [messages]);
+
+  // Subscribe to target user updates for real-time presence
+  useEffect(() => {
+    if (!targetUser) return;
+
+    const channel = supabase
+      .channel(`user-presence-${targetUser.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'users',
+          filter: `id=eq.${targetUser.id}`,
+        },
+        (payload) => {
+          console.log('Target user presence update:', payload);
+          setTargetUser((prev: any) => ({ ...prev, ...payload.new }));
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [targetUser?.id]);
 
   // Handle typing indicator
   const handleTyping = useCallback((typing: boolean) => {
@@ -117,19 +147,21 @@ export function ChatRoom({ targetUsername }: ChatRoomProps) {
   const handleSendMessage = async () => {
     if (!messageText.trim() || !chatRoom || !currentUser) return;
 
+    const messageContent = messageText.trim();
+    setMessageText(''); // Clear input immediately for better UX
+    handleTyping(false);
+
     const { error } = await sendMessage(
       chatRoom.id,
       currentUser.id,
-      messageText
+      messageContent
     );
 
     if (error) {
       toast.error('Failed to send message');
+      setMessageText(messageContent); // Restore message on error
       return;
     }
-
-    setMessageText('');
-    handleTyping(false);
   };
 
   const handleImageSend = async (imageUrl: string, caption?: string) => {
@@ -165,7 +197,7 @@ export function ChatRoom({ targetUsername }: ChatRoomProps) {
 
   const isOnline = targetUser && (
     targetUser.is_online && 
-    new Date().getTime() - new Date(targetUser.last_seen).getTime() < 15000
+    new Date().getTime() - new Date(targetUser.last_seen).getTime() < 30000 // 30 seconds
   );
 
   return (
