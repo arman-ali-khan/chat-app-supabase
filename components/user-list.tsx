@@ -36,7 +36,7 @@ export function UserList({ currentUser, onUserSelect, onLogout, selectedUsername
           table: 'users',
         },
         (payload) => {
-          console.log('User update received:', payload);
+          console.log('User update received in user list:', payload);
           setUsers((prev) =>
             prev.map((user) =>
               user.id === payload.new.id ? { ...user, ...payload.new } : user
@@ -75,6 +75,7 @@ export function UserList({ currentUser, onUserSelect, onLogout, selectedUsername
   }, [users, searchQuery, currentUser]);
 
   const fetchUsers = async () => {
+    console.log('Fetching users for user list');
     const { data, error } = await supabase
       .from('users')
       .select('*')
@@ -86,6 +87,7 @@ export function UserList({ currentUser, onUserSelect, onLogout, selectedUsername
     }
     
     if (data) {
+      console.log('Users fetched:', data.length);
       setUsers(data);
     }
   };
@@ -93,12 +95,30 @@ export function UserList({ currentUser, onUserSelect, onLogout, selectedUsername
   const isUserOnline = (user: any) => {
     if (!user.is_online) return false;
     
-    // Consider user online if they were active within the last 30 seconds
+    // Consider user online if they were active within the last 1 minute
     const lastSeen = new Date(user.last_seen).getTime();
     const now = new Date().getTime();
     const timeDiff = now - lastSeen;
     
-    return timeDiff < 30000; // 30 seconds
+    return timeDiff < 60000; // 1 minute
+  };
+
+  const getLastSeenText = (user: any) => {
+    if (isUserOnline(user)) return 'Online';
+    
+    const lastSeen = new Date(user.last_seen);
+    const now = new Date();
+    const diffMs = now.getTime() - lastSeen.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMins / 60);
+    const diffDays = Math.floor(diffHours / 24);
+    
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    
+    return lastSeen.toLocaleDateString();
   };
 
   return (
@@ -156,6 +176,8 @@ export function UserList({ currentUser, onUserSelect, onLogout, selectedUsername
             <div className="space-y-1">
               {filteredUsers.map((user) => {
                 const isOnline = isUserOnline(user);
+                const lastSeenText = getLastSeenText(user);
+                
                 return (
                   <button
                     key={user.id}
@@ -192,16 +214,8 @@ export function UserList({ currentUser, onUserSelect, onLogout, selectedUsername
                           "text-xs",
                           isOnline ? "text-green-500" : "text-gray-400"
                         )}>
-                          {isOnline ? 'Online' : 'Offline'}
+                          {lastSeenText}
                         </p>
-                        {!isOnline && user.last_seen && (
-                          <p className="text-xs text-gray-400">
-                            {new Date(user.last_seen).toLocaleTimeString([], { 
-                              hour: '2-digit', 
-                              minute: '2-digit' 
-                            })}
-                          </p>
-                        )}
                       </div>
                     </div>
                   </button>

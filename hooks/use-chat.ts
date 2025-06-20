@@ -59,6 +59,13 @@ export function useChat() {
     try {
       const encryptedContent = encryptMessage(content);
       
+      console.log('Sending message:', {
+        chatRoomId,
+        senderId,
+        content: content.substring(0, 50) + '...',
+        messageType
+      });
+      
       const { data, error } = await supabase
         .from('messages')
         .insert({
@@ -72,7 +79,10 @@ export function useChat() {
         .select()
         .single();
 
-      if (error) throw error;
+      if (error) {
+        console.error('Error sending message:', error);
+        throw error;
+      }
       
       console.log('Message sent successfully:', data);
       return { message: data, error: null };
@@ -119,15 +129,24 @@ export function useChat() {
 
   const setTypingStatus = useCallback(async (chatRoomId: string, userId: string, isTyping: boolean) => {
     try {
+      console.log('Setting typing status:', { chatRoomId, userId, isTyping });
+      
       const { error } = await supabase
         .from('typing_status')
         .upsert({
           chat_room_id: chatRoomId,
           user_id: userId,
           is_typing: isTyping,
+        }, {
+          onConflict: 'chat_room_id,user_id'
         });
 
-      if (error) throw error;
+      if (error) {
+        console.error('Error setting typing status:', error);
+        throw error;
+      }
+      
+      console.log('Typing status set successfully');
     } catch (error) {
       console.error('Error setting typing status:', error);
     }

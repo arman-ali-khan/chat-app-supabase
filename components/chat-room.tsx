@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { getCurrentUser, logoutUser } from '@/lib/auth';
+import { getCurrentUser, logoutUser, updateUserPresence } from '@/lib/auth';
 import { useChat } from '@/hooks/use-chat';
 import { useRealtimeMessages, useRealtimeTyping } from '@/hooks/use-realtime';
 import { MessageBubble } from './message-bubble';
@@ -45,6 +45,9 @@ export function ChatRoom({ targetUsername }: ChatRoomProps) {
       router.push('/');
       return;
     }
+    
+    // Update presence when entering chat room
+    updateUserPresence(currentUser.id, true);
   }, [currentUser, router]);
 
   // Find target user and create/find chat room
@@ -53,6 +56,8 @@ export function ChatRoom({ targetUsername }: ChatRoomProps) {
       if (!currentUser || !targetUsername) return;
 
       try {
+        console.log('Initializing chat with:', targetUsername);
+        
         // Find target user
         const { data: user, error: userError } = await supabase
           .from('users')
@@ -61,11 +66,13 @@ export function ChatRoom({ targetUsername }: ChatRoomProps) {
           .single();
 
         if (userError || !user) {
+          console.error('User not found:', userError);
           toast.error('User not found');
           router.push('/chat');
           return;
         }
 
+        console.log('Target user found:', user);
         setTargetUser(user);
 
         // Create or find chat room
@@ -75,12 +82,15 @@ export function ChatRoom({ targetUsername }: ChatRoomProps) {
         );
 
         if (roomError) {
+          console.error('Failed to create chat room:', roomError);
           toast.error('Failed to create chat room');
           return;
         }
 
+        console.log('Chat room ready:', room);
         setChatRoom(room);
       } catch (error) {
+        console.error('Error initializing chat:', error);
         toast.error('Something went wrong');
       }
     };
@@ -101,6 +111,8 @@ export function ChatRoom({ targetUsername }: ChatRoomProps) {
   useEffect(() => {
     if (!targetUser) return;
 
+    console.log('Setting up presence subscription for target user:', targetUser.id);
+
     const channel = supabase
       .channel(`user-presence-${targetUser.id}`)
       .on(
@@ -116,31 +128,45 @@ export function ChatRoom({ targetUsername }: ChatRoomProps) {
           setTargetUser((prev: any) => ({ ...prev, ...payload.new }));
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        console.log('Target user presence subscription status:', status);
+      });
 
     return () => {
+      console.log('Cleaning up target user presence subscription');
       supabase.removeChannel(channel);
     };
   }, [targetUser?.id]);
 
-  // Handle typing indicator
+  // Handle typing indicator with improved debouncing
   const handleTyping = useCallback((typing: boolean) => {
     if (!chatRoom || !currentUser) return;
     
-    setTypingStatus(chatRoom.id, currentUser.id, typing);
+    console.log('Handling typing status:', typing);
     
     if (typing) {
       setIsTyping(true);
+      setTypingStatus(chatRoom.id, currentUser.id, true);
+      
+      // Clear existing timeout
       if (typingTimeoutRef.current) {
         clearTimeout(typingTimeoutRef.current);
       }
       
+      // Set new timeout
       typingTimeoutRef.current = setTimeout(() => {
+        console.log('Typing timeout reached, setting to false');
         setIsTyping(false);
         setTypingStatus(chatRoom.id, currentUser.id, false);
       }, 3000);
     } else {
       setIsTyping(false);
+      setTypingStatus(chatRoom.id, currentUser.id, false);
+      
+      // Clear timeout when explicitly stopping typing
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
     }
   }, [chatRoom, currentUser, setTypingStatus]);
 
@@ -149,7 +175,9 @@ export function ChatRoom({ targetUsername }: ChatRoomProps) {
 
     const messageContent = messageText.trim();
     setMessageText(''); // Clear input immediately for better UX
-    handleTyping(false);
+    handleTyping(false); // Stop typing indicator
+
+    console.log('Sending message:', messageContent);
 
     const { error } = await sendMessage(
       chatRoom.id,
@@ -158,6 +186,7 @@ export function ChatRoom({ targetUsername }: ChatRoomProps) {
     );
 
     if (error) {
+      console.error('Failed to send message:', error);
       toast.error('Failed to send message');
       setMessageText(messageContent); // Restore message on error
       return;
@@ -197,7 +226,7 @@ export function ChatRoom({ targetUsername }: ChatRoomProps) {
 
   const isOnline = targetUser && (
     targetUser.is_online && 
-    new Date().getTime() - new Date(targetUser.last_seen).getTime() < 30000 // 30 seconds
+    new Date().getTime() - new Date(targetUser.last_seen).getTime() < 60000 // 1 minute threshold
   );
 
   return (

@@ -36,15 +36,19 @@ export function useRealtimeMessages(chatRoomId: string | null) {
       }
       
       if (data) {
+        console.log('Initial messages loaded:', data.length);
         setMessages(data as Message[]);
       }
     };
 
     fetchMessages();
 
-    // Subscribe to realtime changes
+    // Subscribe to realtime changes with a unique channel name
+    const channelName = `messages-${chatRoomId}-${Date.now()}`;
+    console.log('Subscribing to channel:', channelName);
+    
     const channel = supabase
-      .channel(`messages:${chatRoomId}`)
+      .channel(channelName)
       .on(
         'postgres_changes',
         {
@@ -54,10 +58,10 @@ export function useRealtimeMessages(chatRoomId: string | null) {
           filter: `chat_room_id=eq.${chatRoomId}`,
         },
         async (payload) => {
-          console.log('New message received:', payload);
+          console.log('New message received via realtime:', payload);
           
           // Fetch the complete message with sender info
-          const { data: messageWithSender } = await supabase
+          const { data: messageWithSender, error } = await supabase
             .from('messages')
             .select(`
               *,
@@ -66,8 +70,22 @@ export function useRealtimeMessages(chatRoomId: string | null) {
             .eq('id', payload.new.id)
             .single();
           
+          if (error) {
+            console.error('Error fetching message with sender:', error);
+            return;
+          }
+          
           if (messageWithSender) {
-            setMessages((prev) => [...prev, messageWithSender as Message]);
+            console.log('Adding new message to state:', messageWithSender);
+            setMessages((prev) => {
+              // Check if message already exists to prevent duplicates
+              const exists = prev.some(msg => msg.id === messageWithSender.id);
+              if (exists) {
+                console.log('Message already exists, skipping duplicate');
+                return prev;
+              }
+              return [...prev, messageWithSender as Message];
+            });
           }
         }
       )
@@ -80,10 +98,10 @@ export function useRealtimeMessages(chatRoomId: string | null) {
           filter: `chat_room_id=eq.${chatRoomId}`,
         },
         async (payload) => {
-          console.log('Message updated:', payload);
+          console.log('Message updated via realtime:', payload);
           
           // Fetch the updated message with sender info
-          const { data: messageWithSender } = await supabase
+          const { data: messageWithSender, error } = await supabase
             .from('messages')
             .select(`
               *,
@@ -91,6 +109,11 @@ export function useRealtimeMessages(chatRoomId: string | null) {
             `)
             .eq('id', payload.new.id)
             .single();
+          
+          if (error) {
+            console.error('Error fetching updated message:', error);
+            return;
+          }
           
           if (messageWithSender) {
             setMessages((prev) =>
@@ -110,18 +133,23 @@ export function useRealtimeMessages(chatRoomId: string | null) {
           filter: `chat_room_id=eq.${chatRoomId}`,
         },
         (payload) => {
-          console.log('Message deleted:', payload);
+          console.log('Message deleted via realtime:', payload);
           setMessages((prev) =>
             prev.filter((msg) => msg.id !== payload.old.id)
           );
         }
       )
-      .subscribe((status) => {
-        console.log('Messages subscription status:', status);
+      .subscribe((status, err) => {
+        console.log('Messages subscription status:', status, err);
+        if (status === 'SUBSCRIBED') {
+          console.log('Successfully subscribed to messages channel');
+        } else if (status === 'CHANNEL_ERROR') {
+          console.error('Channel subscription error:', err);
+        }
       });
 
     return () => {
-      console.log('Unsubscribing from messages channel');
+      console.log('Unsubscribing from messages channel:', channelName);
       supabase.removeChannel(channel);
     };
   }, [chatRoomId]);
@@ -154,8 +182,11 @@ export function useRealtimeTyping(chatRoomId: string | null, currentUserId: stri
 
     fetchTypingStatus();
 
+    const channelName = `typing-${chatRoomId}-${Date.now()}`;
+    console.log('Subscribing to typing channel:', channelName);
+
     const channel = supabase
-      .channel(`typing:${chatRoomId}`)
+      .channel(channelName)
       .on(
         'postgres_changes',
         {
@@ -183,12 +214,12 @@ export function useRealtimeTyping(chatRoomId: string | null, currentUserId: stri
           }
         }
       )
-      .subscribe((status) => {
-        console.log('Typing subscription status:', status);
+      .subscribe((status, err) => {
+        console.log('Typing subscription status:', status, err);
       });
 
     return () => {
-      console.log('Unsubscribing from typing channel');
+      console.log('Unsubscribing from typing channel:', channelName);
       supabase.removeChannel(channel);
     };
   }, [chatRoomId, currentUserId]);
@@ -214,8 +245,11 @@ export function useRealtimePresence() {
 
     fetchOnlineUsers();
 
+    const channelName = `users-presence-${Date.now()}`;
+    console.log('Subscribing to presence channel:', channelName);
+
     const channel = supabase
-      .channel('users:presence')
+      .channel(channelName)
       .on(
         'postgres_changes',
         {
@@ -232,12 +266,12 @@ export function useRealtimePresence() {
           });
         }
       )
-      .subscribe((status) => {
-        console.log('Presence subscription status:', status);
+      .subscribe((status, err) => {
+        console.log('Presence subscription status:', status, err);
       });
 
     return () => {
-      console.log('Unsubscribing from presence channel');
+      console.log('Unsubscribing from presence channel:', channelName);
       supabase.removeChannel(channel);
     };
   }, []);

@@ -118,62 +118,105 @@ export function logoutUser() {
 }
 
 export async function updateUserPresence(userId: string, isOnline: boolean) {
-  const { error } = await supabase
-    .from('users')
-    .update({
-      is_online: isOnline,
-      last_seen: new Date().toISOString(),
-    })
-    .eq('id', userId);
+  try {
+    console.log('Updating user presence:', { userId, isOnline });
+    
+    const { error } = await supabase
+      .from('users')
+      .update({
+        is_online: isOnline,
+        last_seen: new Date().toISOString(),
+      })
+      .eq('id', userId);
 
-  return { error };
+    if (error) {
+      console.error('Error updating presence:', error);
+      throw error;
+    }
+    
+    console.log('Presence updated successfully');
+    return { error: null };
+  } catch (error) {
+    console.error('Failed to update presence:', error);
+    return { error: error as Error };
+  }
 }
 
 // Presence heartbeat functionality
 let presenceInterval: NodeJS.Timeout | null = null;
+let isHeartbeatActive = false;
 
 function startPresenceHeartbeat(userId: string) {
+  console.log('Starting presence heartbeat for user:', userId);
+  
   // Clear any existing interval
   if (presenceInterval) {
     clearInterval(presenceInterval);
   }
   
-  // Update presence every 10 seconds
+  isHeartbeatActive = true;
+  
+  // Initial presence update
+  updateUserPresence(userId, true);
+  
+  // Update presence every 15 seconds (reduced from 10 for better performance)
   presenceInterval = setInterval(async () => {
+    if (!isHeartbeatActive) return;
+    
     try {
       await updateUserPresence(userId, true);
     } catch (error) {
-      console.error('Error updating presence:', error);
+      console.error('Error in presence heartbeat:', error);
     }
-  }, 10000);
+  }, 15000);
   
   // Handle page visibility changes
   const handleVisibilityChange = () => {
     if (document.hidden) {
-      // Page is hidden, mark as offline
+      console.log('Page hidden, marking user offline');
       updateUserPresence(userId, false);
     } else {
-      // Page is visible, mark as online
+      console.log('Page visible, marking user online');
       updateUserPresence(userId, true);
     }
   };
   
   // Handle page unload
   const handleBeforeUnload = () => {
+    console.log('Page unloading, marking user offline');
+    updateUserPresence(userId, false);
+  };
+  
+  // Handle online/offline events
+  const handleOnline = () => {
+    console.log('Connection restored, marking user online');
+    updateUserPresence(userId, true);
+  };
+  
+  const handleOffline = () => {
+    console.log('Connection lost, marking user offline');
     updateUserPresence(userId, false);
   };
   
   document.addEventListener('visibilitychange', handleVisibilityChange);
   window.addEventListener('beforeunload', handleBeforeUnload);
+  window.addEventListener('online', handleOnline);
+  window.addEventListener('offline', handleOffline);
   
   // Store cleanup functions
   (window as any).cleanupPresence = () => {
     document.removeEventListener('visibilitychange', handleVisibilityChange);
     window.removeEventListener('beforeunload', handleBeforeUnload);
+    window.removeEventListener('online', handleOnline);
+    window.removeEventListener('offline', handleOffline);
   };
 }
 
 function stopPresenceHeartbeat() {
+  console.log('Stopping presence heartbeat');
+  
+  isHeartbeatActive = false;
+  
   if (presenceInterval) {
     clearInterval(presenceInterval);
     presenceInterval = null;
