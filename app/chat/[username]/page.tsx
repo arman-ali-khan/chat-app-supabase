@@ -1,4 +1,4 @@
-'use client';
+
 
 import { ChatRoom } from '@/components/chat-room';
 

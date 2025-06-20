@@ -9,6 +9,15 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
       eventsPerSecond: 10,
     },
   },
+  auth: {
+    persistSession: false, // Disable Supabase auth session since we're using custom auth
+    autoRefreshToken: false,
+  },
+  global: {
+    headers: {
+      'apikey': supabaseAnonKey,
+    },
+  },
 });
 
 export type Database = {

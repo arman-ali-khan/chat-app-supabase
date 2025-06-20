@@ -13,20 +13,24 @@ export async function loginUser(data: LoginData) {
   const normalizedUsername = username.toLowerCase().trim();
 
   try {
-    // Check if user exists
+    console.log('Attempting to login user:', normalizedUsername);
+    
+    // First, try to find existing user
     const { data: existingUser, error: fetchError } = await supabase
       .from('users')
       .select('*')
       .eq('username', normalizedUsername)
-      .single();
+      .maybeSingle();
 
-    if (fetchError && fetchError.code !== 'PGRST116') {
+    if (fetchError) {
+      console.error('Error fetching user:', fetchError);
       throw fetchError;
     }
 
     let user;
     if (existingUser) {
-      // Update existing user
+      console.log('User exists, updating status');
+      // Update existing user's online status and last seen
       const { data: updatedUser, error: updateError } = await supabase
         .from('users')
         .update({
@@ -38,29 +42,42 @@ export async function loginUser(data: LoginData) {
         .select()
         .single();
 
-      if (updateError) throw updateError;
+      if (updateError) {
+        console.error('Error updating user:', updateError);
+        throw updateError;
+      }
       user = updatedUser;
     } else {
-      // Create new user
+      console.log('Creating new user');
+      // Create new user - try with explicit ID first
+      const userId = crypto.randomUUID();
+      
       const { data: newUser, error: insertError } = await supabase
         .from('users')
         .insert({
+          id: userId,
           username: normalizedUsername,
           display_name: username, // Keep original case for display
           phone_number: phoneNumber,
           is_online: true,
+          last_seen: new Date().toISOString(),
         })
         .select()
         .single();
 
-      if (insertError) throw insertError;
+      if (insertError) {
+        console.error('Error creating user:', insertError);
+        throw insertError;
+      }
       user = newUser;
     }
 
+    console.log('Login successful:', user);
     // Store user in localStorage
     localStorage.setItem('currentUser', JSON.stringify(user));
     return { user, error: null };
   } catch (error) {
+    console.error('Login error:', error);
     return { user: null, error: error as Error };
   }
 }
@@ -82,7 +99,13 @@ export function logoutUser() {
         is_online: false, 
         last_seen: new Date().toISOString() 
       })
-      .eq('id', user.id);
+      .eq('id', user.id)
+      .then(() => {
+        console.log('User logged out successfully');
+      })
+      .catch((error) => {
+        console.error('Error updating logout status:', error);
+      });
   }
   localStorage.removeItem('currentUser');
 }
