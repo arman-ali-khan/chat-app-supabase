@@ -1,15 +1,67 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { encryptMessage, decryptMessage, generateChatRoomKey } from '@/lib/encryption';
+import { offlineMessageQueue } from '@/lib/offline-queue';
 import { Database } from '@/lib/supabase';
+import { toast } from 'sonner';
 
 type ChatRoom = Database['public']['Tables']['chat_rooms']['Row'];
 type Message = Database['public']['Tables']['messages']['Row'];
 
 export function useChat() {
   const [isLoading, setIsLoading] = useState(false);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+
+  useEffect(() => {
+    const handleOnline = async () => {
+      setIsOnline(true);
+      // Process queued messages when coming back online
+      await offlineMessageQueue.processQueue(async (queuedMessage) => {
+        try {
+          const { error } = await supabase
+            .from('messages')
+            .insert({
+              chat_room_id: queuedMessage.chatRoomId,
+              sender_id: queuedMessage.senderId,
+              encrypted_content: encryptMessage(queuedMessage.content),
+              message_type: queuedMessage.messageType,
+              image_url: queuedMessage.imageUrl,
+            });
+
+          if (error) {
+            console.error('Error sending queued message:', error);
+            return false;
+          }
+          
+          return true;
+        } catch (error) {
+          console.error('Error processing queued message:', error);
+          return false;
+        }
+      });
+
+      const queueLength = offlineMessageQueue.getQueueLength();
+      if (queueLength === 0) {
+        toast.success('All messages sent successfully');
+      } else {
+        toast.warning(`${queueLength} messages failed to send`);
+      }
+    };
+
+    const handleOffline = () => {
+      setIsOnline(false);
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   const findOrCreateChatRoom = useCallback(async (user1Id: string, user2Id: string) => {
     setIsLoading(true);
@@ -56,6 +108,20 @@ export function useChat() {
     imageUrl?: string,
     replyToId?: string
   ) => {
+    // If offline, queue the message
+    if (!isOnline) {
+      const queueId = offlineMessageQueue.addMessage({
+        chatRoomId,
+        senderId,
+        content,
+        messageType,
+        imageUrl,
+      });
+      
+      toast.info('Message queued - will send when online');
+      return { message: null, error: null, queued: true };
+    }
+
     try {
       const encryptedContent = encryptMessage(content);
       
@@ -81,6 +147,21 @@ export function useChat() {
 
       if (error) {
         console.error('Error sending message:', error);
+        
+        // If it's a network error, queue the message
+        if (error.message.includes('network') || error.message.includes('fetch')) {
+          const queueId = offlineMessageQueue.addMessage({
+            chatRoomId,
+            senderId,
+            content,
+            messageType,
+            imageUrl,
+          });
+          
+          toast.info('Network error - message queued');
+          return { message: null, error: null, queued: true };
+        }
+        
         throw error;
       }
       
@@ -90,9 +171,14 @@ export function useChat() {
       console.error('Error sending message:', error);
       return { message: null, error: error as Error };
     }
-  }, []);
+  }, [isOnline]);
 
   const editMessage = useCallback(async (messageId: string, newContent: string) => {
+    if (!isOnline) {
+      toast.error('Cannot edit messages while offline');
+      return { message: null, error: new Error('Offline') };
+    }
+
     try {
       const encryptedContent = encryptMessage(newContent);
       
@@ -111,9 +197,14 @@ export function useChat() {
     } catch (error) {
       return { message: null, error: error as Error };
     }
-  }, []);
+  }, [isOnline]);
 
   const deleteMessage = useCallback(async (messageId: string) => {
+    if (!isOnline) {
+      toast.error('Cannot delete messages while offline');
+      return { error: new Error('Offline') };
+    }
+
     try {
       const { error } = await supabase
         .from('messages')
@@ -125,9 +216,11 @@ export function useChat() {
     } catch (error) {
       return { error: error as Error };
     }
-  }, []);
+  }, [isOnline]);
 
   const setTypingStatus = useCallback(async (chatRoomId: string, userId: string, isTyping: boolean) => {
+    if (!isOnline) return; // Don't try to set typing status when offline
+
     try {
       console.log('Setting typing status:', { chatRoomId, userId, isTyping });
       
@@ -150,10 +243,11 @@ export function useChat() {
     } catch (error) {
       console.error('Error setting typing status:', error);
     }
-  }, []);
+  }, [isOnline]);
 
   return {
     isLoading,
+    isOnline,
     findOrCreateChatRoom,
     sendMessage,
     editMessage,

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Database } from '@/lib/supabase';
+import { toast } from 'sonner';
 
 type Message = Database['public']['Tables']['messages']['Row'] & {
   sender?: Database['public']['Tables']['users']['Row'];
@@ -12,6 +13,7 @@ type TypingStatus = Database['public']['Tables']['typing_status']['Row'];
 
 export function useRealtimeMessages(chatRoomId: string | null) {
   const [messages, setMessages] = useState<Message[]>([]);
+  const [isConnected, setIsConnected] = useState(true);
 
   useEffect(() => {
     if (!chatRoomId) {
@@ -21,23 +23,31 @@ export function useRealtimeMessages(chatRoomId: string | null) {
 
     // Fetch initial messages with sender information
     const fetchMessages = async () => {
-      const { data, error } = await supabase
-        .from('messages')
-        .select(`
-          *,
-          sender:users!messages_sender_id_fkey(*)
-        `)
-        .eq('chat_room_id', chatRoomId)
-        .order('created_at', { ascending: true });
-      
-      if (error) {
-        console.error('Error fetching messages:', error);
-        return;
-      }
-      
-      if (data) {
-        console.log('Initial messages loaded:', data.length);
-        setMessages(data as Message[]);
+      try {
+        const { data, error } = await supabase
+          .from('messages')
+          .select(`
+            *,
+            sender:users!messages_sender_id_fkey(*)
+          `)
+          .eq('chat_room_id', chatRoomId)
+          .order('created_at', { ascending: true });
+        
+        if (error) {
+          console.error('Error fetching messages:', error);
+          setIsConnected(false);
+          return;
+        }
+        
+        if (data) {
+          console.log('Initial messages loaded:', data.length);
+          setMessages(data as Message[]);
+          setIsConnected(true);
+        }
+      } catch (error) {
+        console.error('Failed to fetch messages:', error);
+        setIsConnected(false);
+        toast.error('Failed to load messages');
       }
     };
 
@@ -60,32 +70,38 @@ export function useRealtimeMessages(chatRoomId: string | null) {
         async (payload) => {
           console.log('New message received via realtime:', payload);
           
-          // Fetch the complete message with sender info
-          const { data: messageWithSender, error } = await supabase
-            .from('messages')
-            .select(`
-              *,
-              sender:users!messages_sender_id_fkey(*)
-            `)
-            .eq('id', payload.new.id)
-            .single();
-          
-          if (error) {
-            console.error('Error fetching message with sender:', error);
-            return;
-          }
-          
-          if (messageWithSender) {
-            console.log('Adding new message to state:', messageWithSender);
-            setMessages((prev) => {
-              // Check if message already exists to prevent duplicates
-              const exists = prev.some(msg => msg.id === messageWithSender.id);
-              if (exists) {
-                console.log('Message already exists, skipping duplicate');
-                return prev;
-              }
-              return [...prev, messageWithSender as Message];
-            });
+          try {
+            // Fetch the complete message with sender info
+            const { data: messageWithSender, error } = await supabase
+              .from('messages')
+              .select(`
+                *,
+                sender:users!messages_sender_id_fkey(*)
+              `)
+              .eq('id', payload.new.id)
+              .single();
+            
+            if (error) {
+              console.error('Error fetching message with sender:', error);
+              return;
+            }
+            
+            if (messageWithSender) {
+              console.log('Adding new message to state:', messageWithSender);
+              setMessages((prev) => {
+                // Check if message already exists to prevent duplicates
+                const exists = prev.some(msg => msg.id === messageWithSender.id);
+                if (exists) {
+                  console.log('Message already exists, skipping duplicate');
+                  return prev;
+                }
+                return [...prev, messageWithSender as Message];
+              });
+              setIsConnected(true);
+            }
+          } catch (error) {
+            console.error('Error processing new message:', error);
+            setIsConnected(false);
           }
         }
       )
@@ -100,27 +116,33 @@ export function useRealtimeMessages(chatRoomId: string | null) {
         async (payload) => {
           console.log('Message updated via realtime:', payload);
           
-          // Fetch the updated message with sender info
-          const { data: messageWithSender, error } = await supabase
-            .from('messages')
-            .select(`
-              *,
-              sender:users!messages_sender_id_fkey(*)
-            `)
-            .eq('id', payload.new.id)
-            .single();
-          
-          if (error) {
-            console.error('Error fetching updated message:', error);
-            return;
-          }
-          
-          if (messageWithSender) {
-            setMessages((prev) =>
-              prev.map((msg) =>
-                msg.id === payload.new.id ? (messageWithSender as Message) : msg
-              )
-            );
+          try {
+            // Fetch the updated message with sender info
+            const { data: messageWithSender, error } = await supabase
+              .from('messages')
+              .select(`
+                *,
+                sender:users!messages_sender_id_fkey(*)
+              `)
+              .eq('id', payload.new.id)
+              .single();
+            
+            if (error) {
+              console.error('Error fetching updated message:', error);
+              return;
+            }
+            
+            if (messageWithSender) {
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === payload.new.id ? (messageWithSender as Message) : msg
+                )
+              );
+              setIsConnected(true);
+            }
+          } catch (error) {
+            console.error('Error processing message update:', error);
+            setIsConnected(false);
           }
         }
       )
@@ -143,8 +165,14 @@ export function useRealtimeMessages(chatRoomId: string | null) {
         console.log('Messages subscription status:', status, err);
         if (status === 'SUBSCRIBED') {
           console.log('Successfully subscribed to messages channel');
+          setIsConnected(true);
         } else if (status === 'CHANNEL_ERROR') {
           console.error('Channel subscription error:', err);
+          setIsConnected(false);
+          toast.error('Real-time connection lost');
+        } else if (status === 'CLOSED') {
+          console.log('Channel closed');
+          setIsConnected(false);
         }
       });
 
@@ -168,15 +196,19 @@ export function useRealtimeTyping(chatRoomId: string | null, currentUserId: stri
 
     // Fetch initial typing status
     const fetchTypingStatus = async () => {
-      const { data } = await supabase
-        .from('typing_status')
-        .select('*')
-        .eq('chat_room_id', chatRoomId)
-        .eq('is_typing', true)
-        .neq('user_id', currentUserId);
-      
-      if (data) {
-        setTypingUsers(data.map(status => status.user_id));
+      try {
+        const { data } = await supabase
+          .from('typing_status')
+          .select('*')
+          .eq('chat_room_id', chatRoomId)
+          .eq('is_typing', true)
+          .neq('user_id', currentUserId);
+        
+        if (data) {
+          setTypingUsers(data.map(status => status.user_id));
+        }
+      } catch (error) {
+        console.error('Error fetching typing status:', error);
       }
     };
 
@@ -198,24 +230,31 @@ export function useRealtimeTyping(chatRoomId: string | null, currentUserId: stri
         (payload) => {
           console.log('Typing status change:', payload);
           
-          if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
-            const typing = payload.new as TypingStatus;
-            if (typing.user_id !== currentUserId) {
-              setTypingUsers((prev) => {
-                const filtered = prev.filter((id) => id !== typing.user_id);
-                return typing.is_typing ? [...filtered, typing.user_id] : filtered;
-              });
+          try {
+            if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+              const typing = payload.new as TypingStatus;
+              if (typing.user_id !== currentUserId) {
+                setTypingUsers((prev) => {
+                  const filtered = prev.filter((id) => id !== typing.user_id);
+                  return typing.is_typing ? [...filtered, typing.user_id] : filtered;
+                });
+              }
+            } else if (payload.eventType === 'DELETE') {
+              const typing = payload.old as TypingStatus;
+              if (typing.user_id !== currentUserId) {
+                setTypingUsers((prev) => prev.filter((id) => id !== typing.user_id));
+              }
             }
-          } else if (payload.eventType === 'DELETE') {
-            const typing = payload.old as TypingStatus;
-            if (typing.user_id !== currentUserId) {
-              setTypingUsers((prev) => prev.filter((id) => id !== typing.user_id));
-            }
+          } catch (error) {
+            console.error('Error processing typing status change:', error);
           }
         }
       )
       .subscribe((status, err) => {
         console.log('Typing subscription status:', status, err);
+        if (status === 'CHANNEL_ERROR') {
+          console.error('Typing channel error:', err);
+        }
       });
 
     return () => {
@@ -233,13 +272,17 @@ export function useRealtimePresence() {
   useEffect(() => {
     // Fetch initial online users
     const fetchOnlineUsers = async () => {
-      const { data } = await supabase
-        .from('users')
-        .select('*')
-        .eq('is_online', true);
-      
-      if (data) {
-        setOnlineUsers(data);
+      try {
+        const { data } = await supabase
+          .from('users')
+          .select('*')
+          .eq('is_online', true);
+        
+        if (data) {
+          setOnlineUsers(data);
+        }
+      } catch (error) {
+        console.error('Error fetching online users:', error);
       }
     };
 
@@ -259,11 +302,15 @@ export function useRealtimePresence() {
         },
         (payload) => {
           console.log('User presence update:', payload);
-          const user = payload.new as User;
-          setOnlineUsers((prev) => {
-            const filtered = prev.filter((u) => u.id !== user.id);
-            return user.is_online ? [...filtered, user] : filtered;
-          });
+          try {
+            const user = payload.new as User;
+            setOnlineUsers((prev) => {
+              const filtered = prev.filter((u) => u.id !== user.id);
+              return user.is_online ? [...filtered, user] : filtered;
+            });
+          } catch (error) {
+            console.error('Error processing presence update:', error);
+          }
         }
       )
       .subscribe((status, err) => {

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { Send, Image, Smile, MoreVertical, ArrowLeft, Circle } from 'lucide-react';
+import { Send, Image, MoreVertical, ArrowLeft, Circle, Wifi, WifiOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -14,6 +14,7 @@ import { MessageBubble } from './message-bubble';
 import { TypingIndicator } from './typing-indicator';
 import { UserList } from './user-list';
 import { ImageUpload } from './image-upload';
+import { EmojiPicker } from './emoji-picker';
 import { decryptMessage } from '@/lib/encryption';
 import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
@@ -30,14 +31,66 @@ export function ChatRoom({ targetUsername }: ChatRoomProps) {
   const [isTyping, setIsTyping] = useState(false);
   const [showUserList, setShowUserList] = useState(true);
   const [showImageUpload, setShowImageUpload] = useState(false);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [connectionRetries, setConnectionRetries] = useState(0);
   
   const router = useRouter();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout>();
+  const connectionCheckRef = useRef<NodeJS.Timeout>();
   
   const { findOrCreateChatRoom, sendMessage, setTypingStatus } = useChat();
   const messages = useRealtimeMessages(chatRoom?.id);
   const typingUsers = useRealtimeTyping(chatRoom?.id, currentUser?.id);
+
+  // Connection monitoring
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      setConnectionRetries(0);
+      toast.success('Connection restored');
+    };
+
+    const handleOffline = () => {
+      setIsOnline(false);
+      toast.error('Connection lost');
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    // Check Supabase connection periodically
+    const checkConnection = async () => {
+      try {
+        const { error } = await supabase.from('users').select('id').limit(1);
+        if (error) throw error;
+        
+        if (!isOnline) {
+          setIsOnline(true);
+          setConnectionRetries(0);
+        }
+      } catch (error) {
+        console.error('Connection check failed:', error);
+        if (connectionRetries < 3) {
+          setConnectionRetries(prev => prev + 1);
+          setTimeout(checkConnection, 5000 * (connectionRetries + 1));
+        } else {
+          setIsOnline(false);
+          toast.error('Unable to connect to server');
+        }
+      }
+    };
+
+    connectionCheckRef.current = setInterval(checkConnection, 30000);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      if (connectionCheckRef.current) {
+        clearInterval(connectionCheckRef.current);
+      }
+    };
+  }, [connectionRetries, isOnline]);
 
   // Redirect if not logged in
   useEffect(() => {
@@ -140,7 +193,7 @@ export function ChatRoom({ targetUsername }: ChatRoomProps) {
 
   // Handle typing indicator with improved debouncing
   const handleTyping = useCallback((typing: boolean) => {
-    if (!chatRoom || !currentUser) return;
+    if (!chatRoom || !currentUser || !isOnline) return;
     
     console.log('Handling typing status:', typing);
     
@@ -168,10 +221,15 @@ export function ChatRoom({ targetUsername }: ChatRoomProps) {
         clearTimeout(typingTimeoutRef.current);
       }
     }
-  }, [chatRoom, currentUser, setTypingStatus]);
+  }, [chatRoom, currentUser, setTypingStatus, isOnline]);
 
   const handleSendMessage = async () => {
     if (!messageText.trim() || !chatRoom || !currentUser) return;
+
+    if (!isOnline) {
+      toast.error('Cannot send message while offline');
+      return;
+    }
 
     const messageContent = messageText.trim();
     setMessageText(''); // Clear input immediately for better UX
@@ -196,6 +254,11 @@ export function ChatRoom({ targetUsername }: ChatRoomProps) {
   const handleImageSend = async (imageUrl: string, caption?: string) => {
     if (!chatRoom || !currentUser) return;
 
+    if (!isOnline) {
+      toast.error('Cannot send image while offline');
+      return;
+    }
+
     const { error } = await sendMessage(
       chatRoom.id,
       currentUser.id,
@@ -212,6 +275,10 @@ export function ChatRoom({ targetUsername }: ChatRoomProps) {
     setShowImageUpload(false);
   };
 
+  const handleEmojiSelect = (emoji: string) => {
+    setMessageText(prev => prev + emoji);
+  };
+
   const handleLogout = () => {
     logoutUser();
     router.push('/');
@@ -224,7 +291,7 @@ export function ChatRoom({ targetUsername }: ChatRoomProps) {
 
   if (!currentUser) return null;
 
-  const isOnline = targetUser && (
+  const isTargetOnline = targetUser && (
     targetUser.is_online && 
     new Date().getTime() - new Date(targetUser.last_seen).getTime() < 60000 // 1 minute threshold
   );
@@ -261,6 +328,15 @@ export function ChatRoom({ targetUsername }: ChatRoomProps) {
             <ArrowLeft className="w-4 h-4" />
           </Button>
           
+          {/* Connection Status */}
+          <div className="mr-3">
+            {isOnline ? (
+              <Wifi className="w-4 h-4 text-green-500" />
+            ) : (
+              <WifiOff className="w-4 h-4 text-red-500" />
+            )}
+          </div>
+          
           {targetUser && (
             <div className="flex items-center flex-1">
               <Avatar className="w-10 h-10 mr-3">
@@ -275,11 +351,11 @@ export function ChatRoom({ targetUsername }: ChatRoomProps) {
                 <div className="flex items-center text-sm">
                   <Circle 
                     className={`w-2 h-2 mr-1 ${
-                      isOnline ? 'text-green-500 fill-current' : 'text-gray-400'
+                      isTargetOnline ? 'text-green-500 fill-current' : 'text-gray-400'
                     }`} 
                   />
                   <span className="text-gray-500 dark:text-gray-400">
-                    {isOnline ? 'Online' : 'Offline'}
+                    {isTargetOnline ? 'Online' : 'Offline'}
                   </span>
                   {typingUsers.length > 0 && (
                     <span className="ml-2 text-blue-500">typing...</span>
@@ -316,17 +392,21 @@ export function ChatRoom({ targetUsername }: ChatRoomProps) {
 
         {/* Message Input */}
         <div className="p-4 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700">
+          {!isOnline && (
+            <div className="mb-2 p-2 bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200 text-sm rounded">
+              You're offline. Messages will be sent when connection is restored.
+            </div>
+          )}
           <div className="flex items-center space-x-2">
             <Button
               variant="ghost"
               size="sm"
               onClick={() => setShowImageUpload(true)}
+              disabled={!isOnline}
             >
               <Image className="w-4 h-4" />
             </Button>
-            <Button variant="ghost" size="sm">
-              <Smile className="w-4 h-4" />
-            </Button>
+            <EmojiPicker onEmojiSelect={handleEmojiSelect} />
             <Input
               value={messageText}
               onChange={(e) => {
@@ -343,12 +423,13 @@ export function ChatRoom({ targetUsername }: ChatRoomProps) {
                   handleSendMessage();
                 }
               }}
-              placeholder="Type a message..."
+              placeholder={isOnline ? "Type a message..." : "Offline - messages will be sent when connected"}
               className="flex-1"
+              disabled={!isOnline}
             />
             <Button 
               onClick={handleSendMessage}
-              disabled={!messageText.trim()}
+              disabled={!messageText.trim() || !isOnline}
               className="bg-blue-500 hover:bg-blue-600"
             >
               <Send className="w-4 h-4" />
